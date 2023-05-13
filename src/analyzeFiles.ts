@@ -2,17 +2,11 @@ import { OpenAIApi } from 'openai'
 import _ from 'lodash'
 import fs from 'fs/promises'
 import path from 'path'
-import { CreateChatCompletionRequest } from 'openai/api'
+import { ChatCompletionRequestMessage, CreateChatCompletionRequest } from 'openai/api'
 import { Logger } from './util/logger'
 import { AxiosError } from 'axios'
 import { retry } from './util/retry'
 import { getLLMTokensFromString } from './util/getLLMTokensFromString'
-
-type File = {
-    filePath: string
-    content: string
-}
-type Context = File[]
 
 export type AnalyzerOptions = {
     model: 'gpt-4' | 'gpt-4-0314' | 'gpt-4-32k' | 'gpt-4-32k-0314' | 'gpt-3.5-turbo' | 'gpt-3.5-turbo-0301'
@@ -30,8 +24,17 @@ export type AnalyzerOptions = {
      * - gpt-3.5-turbo - 4096. Set to 2 000.
      */
     maxSourceTokensPerRequest: number
+    /**
+     * When dryRun is enabled, no api requests will be sent
+     */
     dryRun: boolean
     systemPrompt: string
+    /**
+     * Enable self-analysis, i.e. asking the AI to improve its answer.
+     * Uses the selfAnalysisPrompt to ask for an improvement.
+     */
+    enableSelfAnalysis: boolean
+    selfAnalysisPrompt: string
     textProcessing: {
         /** Text prefixed to the context. The idea is to help the AI separate the context from the content */
         contextPrefix: string
@@ -48,6 +51,12 @@ export type AnalyzerOptions = {
         filePathPrefixTemplate: string
     }
 }
+
+type File = {
+    filePath: string
+    content: string
+}
+type Context = File[]
 
 export const createAnalyzeFiles = (
     ai: OpenAIApi,
@@ -128,7 +137,25 @@ const analyzeFileWithContext = async (ai: OpenAIApi, options: AnalyzerOptions, l
             hasMoreLeftToAnalyze ? options.textProcessing.snippedContentPostfix : ''
         ].join('')
 
-        const result = await runAiOverlordAnalyzer(ai, options, logger, userPrompt)
+        const systemPrompt = options.systemPrompt.replaceAll(/\{filePath}/g, file.filePath)
+
+        const messages: ChatCompletionRequestMessage[] = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+        ]
+
+        let result = await runAiOverlordAnalyzer(ai, options, logger, messages)
+        if (options.enableSelfAnalysis) {
+            const selfAnalysisMessages: ChatCompletionRequestMessage[] = [
+                ...messages,
+                { role: 'assistant', content: result },
+                { role: 'user', content: options.selfAnalysisPrompt }
+            ]
+            const improvedResult = await runAiOverlordAnalyzer(ai, options, logger, selfAnalysisMessages)
+            result += '\n\n----- Improved result -----\n\n'
+            result += improvedResult
+        }
+
         results.push(result)
 
         if (hasMoreLeftToAnalyze) {
@@ -140,16 +167,15 @@ const analyzeFileWithContext = async (ai: OpenAIApi, options: AnalyzerOptions, l
     return results
 }
 
-const runAiOverlordAnalyzer = async (ai: OpenAIApi, options: AnalyzerOptions, logger: Logger, userPrompt: string): Promise<string> => {
+const runAiOverlordAnalyzer = async (
+    ai: OpenAIApi,
+    options: AnalyzerOptions,
+    logger: Logger,
+    messages: ChatCompletionRequestMessage[]
+): Promise<string> => {
     const request: CreateChatCompletionRequest = {
         model: options.model,
-        messages: [{
-            role: 'system',
-            content: options.systemPrompt
-        }, {
-            role: 'user',
-            content: userPrompt
-        }]
+        messages
     }
 
     logger.debug('Sending request')
