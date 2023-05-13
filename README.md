@@ -14,22 +14,36 @@ Example config:
 
 ````ts
 const config = {
-  inputDirectory: path.join(__dirname, './'),
-  outputDirectory: path.join(__dirname, '../.output'),
-  fileScannerOptions: {
-    include:  [/\.ts$/],
-    exclude: [/node_modules/, /\.env/],
-  },
-  analyzerOptions: {
-    model: 'gpt-3.5-turbo',
-    maxTokensPerRequest: 2000,
-    dryRun: false,
-  },
-  loggerOptions: {
-    level: 'info'
-  }
+    inputDirectory: path.join(__dirname, '../'),
+    outputDirectory: path.join(__dirname, '../.output'),
+    fileScannerOptions: {
+        include:  [/\.ts$/],
+        exclude: [/node_modules/, /\.env/],
+    },
+    analyzerOptions: {
+        model: 'gpt-3.5-turbo',
+        maxSourceTokensPerRequest: 2000,
+        dryRun: false,
+        systemPrompt: [
+            'You are a professional code reviewer. Your task is to analyze the code for bugs, issues, and readability.',
+            'Related code is given starting with the word CONTEXT and ending with CONTEXT END. You should not review this related code directly, but you can refer to it.',
+            'Give a concise answer with bullet points. Think step by step.'
+        ].join(' '),
+        textProcessing: {
+            continuedContentPrefix: '// ...previous code snipped\n\n',
+            snippedContentPostfix: '\n\n// ...rest of code snipped',
+            contextPrefix: 'CONTEXT\n',
+            contextPostfix: '\nCONTEXT END\n',
+            filePathPrefixTemplate: '// filePath={filePath}\n\n'
+        }
+    },
+    loggerOptions: {
+        level: 'debug'
+    }
 }
 ````
+
+For each input file a corresponding result file is created in the .output directory.
 
 ## How does it work?
 

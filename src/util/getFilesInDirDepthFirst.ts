@@ -1,29 +1,30 @@
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'fs'
+import * as path from 'path'
 
 export type FileScannerOptions = {
     include: RegExp[]
     exclude: RegExp[]
 }
 
-export const getFilesInDirDepthFirst = (dir: string, options: FileScannerOptions): string[] => {
-    const files = fs.readdirSync(dir)
+export const getFilesInDirDepthFirst = (baseDir: string, dir: string, options: FileScannerOptions): string[] => {
+    const files = fs.readdirSync(path.join(baseDir, dir))
 
     const filesWithType = files.flatMap(fileOrDirName => {
-        const fileOrDirPath = path.join(dir, fileOrDirName)
+        const relativeFileOrDirPath = path.join(dir, fileOrDirName)
+        const absoluteFileOrDirPath = path.join(baseDir, relativeFileOrDirPath)
 
-        const stats = fs.statSync(fileOrDirPath)
+        const stats = fs.statSync(absoluteFileOrDirPath)
 
         if (stats.isDirectory()) {
-            return [{ path: fileOrDirPath, type: 'dir' }]
+            return [{ path: relativeFileOrDirPath, type: 'dir' }]
         } else {
-            return [{ path: fileOrDirPath, type: 'file' }]
+            return [{ path: relativeFileOrDirPath, type: 'file' }]
         }
     })
 
     const filesInSubDirs = filesWithType
         .filter(f => f.type === 'dir')
-        .flatMap(f => getFilesInDirDepthFirst(f.path, options))
+        .flatMap(f => getFilesInDirDepthFirst(baseDir, f.path, options))
 
     const topLevelFiles = filesWithType
         .filter(f => f.type === 'file')
