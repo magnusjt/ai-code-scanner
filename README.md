@@ -23,6 +23,7 @@ const config = {
     analyzerOptions: {
         model: 'gpt-3.5-turbo',
         maxSourceTokensPerRequest: 2000,
+        maxResultTokens: 800,
         dryRun: false,
         systemPrompt: [
             'You are a senior fullstack developer.',
@@ -32,26 +33,30 @@ const config = {
             'You pay extra close attention to function names, and that the function does what it says it does.',
             'You know how to write secure software, and can spot security issues.',
             'Your task is to review the code given to you.',
-            'You MUST look for bugs, security issues, readability, maintainability, and possible improvements.',
+            'You MUST look for bugs, security issues, readability, maintainability, performance, and other possible improvements.',
             'You should verify that the code is up to date with modern standards.',
             'You MUST think through the code step by step before committing to your final answer.',
             'You MUST give your final answer as bullet point lists.',
             'There should be a separate list for each category of review.',
-            'When the code is good, you should say so, and not elaborate',
-            'You MUST not attempt to explain the code.',
-            'You MUST only review the code after filePath={filePath}.',
-            'The code that comes before filePath={filePath} may only be used for reference.',
+            'If the code is good, just say LGTM. Don\'t elaborate.',
+            'Always be concrete about your suggestions. Point to specific examples, and explain why they need improvement.',
+            'You MUST NOT attempt to explain the code.',
+            'You MUST review all code files.',
+            'You MUST always indicate which code file or files you are reviewing.',
+            'The start of each code file is always indicated by a comment with its path, like this: // file = filepath.ts.'
         ].join('\n'),
         enableSelfAnalysis: true,
         selfAnalysisPrompt: [
-            'Please analyze the code and the code review, and give an improved answer.'
+            'Please re-analyze the code and code review, and give an improved answer where possible.'
+        ].join('\n'),
+        enableSummary: true,
+        summaryPrompt: [
+            'Please summarize all your findings so far into a short bullet point list. Max 10 items.'
         ].join('\n'),
         textProcessing: {
-            continuedContentPrefix: '// ...previous code snipped\n\n',
-            snippedContentPostfix: '\n\n// ...rest of code snipped',
-            contextPrefix: '',
-            contextPostfix: '',
-            filePathPrefixTemplate: '// filePath={filePath}\n\n'
+            prefix: '// ...previous code snipped',
+            postfix: '// ...rest of code snipped',
+            filePathPrefixTemplate: '// file = {filePath}'
         }
     },
     loggerOptions: {
@@ -60,11 +65,21 @@ const config = {
 }
 ````
 
-For each input file a corresponding result file is created in the .output directory.
-
 ## How does it work?
 
-We simply list all files matching include/exclude patterns in a directory and its subdirectories.
-The files are iterated bottom-up, and for each file we send one or more requests to openai's chat endpoint.
-We keep already iterated files as context, and send over some of that as well.
-Depending on the model used, we can send more or less context. If a file is too big, it will be broken into multiple requests.
+We create a sliding window over all the file contents in the input directory (filtering in the desired files),
+going from the deepest directories first. The idea behind going bottom-up like this is to give the AI as much context as possible. 
+
+We then send the whole content slice to openai's chat endpoint,
+asking it to review all the files in the slice. At the beginning of each file we add the filepath as a hint to the ai,
+and firmly ask it to separate its reviews by file.
+
+The reason why its done this way is to cram as many tokens as possible into each request.
+This gives the AI more context, and it's also faster than sending many smaller requests.
+
+For each set of input files analyzed, one or more result files are created in the output directory.
+We try to put the results in roughly the same directory structure as the input,
+but there are no guarantees since we potentially cram in many different files in each request.
+Each result file will be applicable to one or more input files in the same directory or its subdirectories.
+
+As the AI gets better at separating its review we might be able to create a separate result file for each reviewed file. 

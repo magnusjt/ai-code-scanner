@@ -26,6 +26,12 @@ export type AnalyzerOptions = {
      */
     maxSourceTokensPerRequest: number
     /**
+     * Max number of tokens for the AI to generate each time
+     * Take care to reduce this if using self-analysis and/or summary.
+     * The total number of tokens include both system, user, and assistant prompts.
+     */
+    maxResultTokens: number
+    /**
      * When dryRun is enabled, no api requests will be sent
      */
     dryRun: boolean
@@ -36,10 +42,17 @@ export type AnalyzerOptions = {
      */
     enableSelfAnalysis: boolean
     selfAnalysisPrompt: string
+    /**
+     * Enable summary, i.e. asking the AI summarize its answer.
+     * Uses the summaryPrompt
+     */
+    enableSummary: boolean
+    summaryPrompt: string
     textProcessing: {
-        continuedContentPrefix: string
-        /** When the content is too large for a single request, add this postfix to indicate that there is more after this */
-        snippedContentPostfix: string
+        /** Prefix all user chat messages */
+        prefix: string
+        /** Postfix all user chat messages */
+        postfix: string
         /**
          * Prefixes the start of each file content with the filepath. The idea is to help the AI understand the architecture better
          * Example: "// filePath={filePath}"
@@ -52,6 +65,16 @@ type AnalysisToken = {
     token: string
     filePath: string
 }
+type SlicePart = {
+    filePath: string
+    content: string
+}
+type Result = {
+    initialResult: string
+    improvedResult: string
+    summary: string
+}
+type Slice = SlicePart[]
 
 export const createAnalyzeFiles = (
     ai: OpenAIApi,
@@ -60,95 +83,94 @@ export const createAnalyzeFiles = (
 ) => async function* (
     baseDirectory: string,
     filePaths: string[]
-): AsyncGenerator<{ result: string, filePath: string }, void, void> {
+): AsyncGenerator<{ result: Result, filePaths: string[] }, void, void> {
+    for await (const slice of getContentSlices(logger, options, baseDirectory, filePaths)) {
+        const result = await analyzeSlice(ai, options, logger, slice)
+
+        yield { result, filePaths: slice.map(part => part.filePath) }
+    }
+}
+
+const getContentSlices = async function*(
+    logger: Logger,
+    options: AnalyzerOptions,
+    baseDirectory: string,
+    filePaths: string[]
+): AsyncGenerator<Slice, void, void> {
     let analysisTokens: AnalysisToken[] = []
 
     for (const filePath of filePaths) {
-        logger.info('Analyzing file ' + filePath)
+        logger.info('Loading file ' + filePath)
 
         const content = await fs.readFile(path.join(baseDirectory, filePath), 'utf-8')
         const tokens = getLLMTokensFromString(content)
         analysisTokens.push(...tokens.map(token => ({ token, filePath })))
 
-        const result = await analyzeTokens(ai, options, logger, analysisTokens, filePath)
-
-        logger.info('Done analyzing file ' + filePath)
-
-        yield { result: result, filePath }
-
-        analysisTokens = analysisTokens.slice(-40_000)
-    }
-}
-
-const analyzeTokens = async (
-    ai: OpenAIApi,
-    options: AnalyzerOptions,
-    logger: Logger,
-    analysisTokens: AnalysisToken[],
-    currentFilePath: string
-): Promise<string> => {
-    const startOfFile = analysisTokens.findIndex(t => t.filePath === currentFilePath)
-    const startOfAnalysis = startOfFile - Math.floor(options.maxSourceTokensPerRequest / 2) // Use about half of the request for contextual info
-    const start = startOfAnalysis < 0 ? 0 : startOfAnalysis
-    const results: string[] = []
-
-    for (let curr = start; curr < analysisTokens.length; curr += options.maxSourceTokensPerRequest - Math.floor(options.maxSourceTokensPerRequest / 10)) {
-        const slice = analysisTokens.slice(curr, curr + options.maxSourceTokensPerRequest)
-
-        const wasContinued = curr >= 1 && analysisTokens.at(curr - 1)?.filePath === currentFilePath
-        const wasSnipped = analysisTokens.at(curr + options.maxSourceTokensPerRequest)?.filePath === currentFilePath
-
-        const messages = createAiInitialChatMessages(options, currentFilePath, slice, wasContinued, wasSnipped)
-        let result = await sendAiRequest(ai, options, logger, messages)
-
-        if (options.enableSelfAnalysis) {
-            const selfAnalysisMessages = createAiSelfAnalysisMessages(options, currentFilePath, messages, result)
-            const improvedResult = await sendAiRequest(ai, options, logger, selfAnalysisMessages)
-            result += '\n\n----- Improved result -----\n\n'
-            result += improvedResult
-        }
-
-        results.push(result)
-
-        if (slice.length < options.maxSourceTokensPerRequest) {
-            break
+        while (analysisTokens.length > options.maxSourceTokensPerRequest) {
+            const analysisTokensSlice = analysisTokens.slice(0, options.maxSourceTokensPerRequest)
+            yield analysisTokensToSlice(analysisTokensSlice)
+            // Cut off the slice, but keep a bit near the end to not lose too much context
+            analysisTokens = analysisTokens.slice(options.maxSourceTokensPerRequest - Math.floor(options.maxSourceTokensPerRequest / 10))
         }
     }
 
-    return results.join('\n\n-----continued-----\n\n')
+    if (analysisTokens.length > 0) {
+        yield analysisTokensToSlice(analysisTokens)
+    }
 }
 
-const createAiInitialChatMessages = (
-    options: AnalyzerOptions,
-    currentFilePath: string,
-    slice: AnalysisToken[],
-    sliceWasContinued: boolean,
-    sliceWasSnipped: boolean
-) => {
-    const files = _(slice)
+const analysisTokensToSlice = (tokenSlice: AnalysisToken[]): Slice => {
+    return _(tokenSlice)
         .groupBy('filePath')
         .mapValues((tokens, filePath) => ({ filePath, content: tokens.map(t => t.token).join('') }))
         .values()
         .value()
+}
 
-    const getFilePathPrefix = (filePath: string) => interpolateTemplate(options.textProcessing.filePathPrefixTemplate, { filePath })
+const analyzeSlice = async (
+    ai: OpenAIApi,
+    options: AnalyzerOptions,
+    logger: Logger,
+    slice: Slice,
+): Promise<Result> => {
+    const messages = createAiInitialChatMessages(options, slice)
+    const initialResult = await sendAiRequest(ai, options, logger, messages)
 
-    const contextFiles = files.length > 0 ? files.slice(0, -1) : []
-    const contentFile = files.at(-1)!
+    const selfAnalysisMessages = createAiSelfAnalysisMessages(options, messages, initialResult)
 
+    let improvedResult = ''
+    if (options.enableSelfAnalysis) {
+        improvedResult = await sendAiRequest(ai, options, logger, selfAnalysisMessages)
+    }
+
+    // Skip the initial result for the rest of the analysis to avoid spending too many tokens
+    const finalResult = improvedResult !== '' ? improvedResult : initialResult
+
+    const summaryMessages = createAiSummaryMessages(options, messages, finalResult)
+
+    let summary = ''
+    if (options.enableSummary) {
+        summary = await sendAiRequest(ai, options, logger, summaryMessages)
+    }
+
+    return { initialResult, improvedResult, summary }
+}
+
+const createAiInitialChatMessages = (
+    options: AnalyzerOptions,
+    slice: Slice
+) => {
     const userPrompt = [
-        ...(contextFiles.length > 0 ? [options.textProcessing.continuedContentPrefix] : []),
-        ...contextFiles.flatMap(file => [getFilePathPrefix(file.filePath), file.content]),
-        getFilePathPrefix(contentFile.filePath),
-        ...(sliceWasContinued ? [options.textProcessing.continuedContentPrefix] : []),
-        contentFile.content,
-        ...(sliceWasSnipped ? [options.textProcessing.snippedContentPostfix] : [])
-    ].join('\n\n')
-
-    const systemPrompt = interpolateTemplate(options.systemPrompt, { filePath: currentFilePath })
+        options.textProcessing.prefix,
+        ...slice.flatMap(({ filePath, content }) => [
+            interpolateTemplate(options.textProcessing.filePathPrefixTemplate, { filePath }),
+            content
+        ]),
+        options.textProcessing.postfix
+    ].join('\n')
 
     const messages: ChatCompletionRequestMessage[] = [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: options.systemPrompt },
         { role: 'user', content: userPrompt }
     ]
 
@@ -157,14 +179,27 @@ const createAiInitialChatMessages = (
 
 const createAiSelfAnalysisMessages = (
     options: AnalyzerOptions,
-    currentFilePath: string,
     previousMessages: ChatCompletionRequestMessage[],
     previousResult: string
 ) => {
     const messages: ChatCompletionRequestMessage[] = [
         ...previousMessages,
         { role: 'assistant', content: previousResult },
-        { role: 'user', content: interpolateTemplate(options.selfAnalysisPrompt, { filePath: currentFilePath }) }
+        { role: 'user', content: options.selfAnalysisPrompt }
+    ]
+
+    return messages
+}
+
+const createAiSummaryMessages = (
+    options: AnalyzerOptions,
+    previousMessages: ChatCompletionRequestMessage[],
+    previousResult: string
+) => {
+    const messages: ChatCompletionRequestMessage[] = [
+        ...previousMessages,
+        { role: 'assistant', content: previousResult },
+        { role: 'user', content: options.summaryPrompt }
     ]
 
     return messages
@@ -178,7 +213,8 @@ const sendAiRequest = async (
 ): Promise<string> => {
     const request: CreateChatCompletionRequest = {
         model: options.model,
-        messages
+        messages,
+        max_tokens: options.maxResultTokens
     }
 
     logger.debug('Sending request')
@@ -188,7 +224,7 @@ const sendAiRequest = async (
         return 'Dry-run'
     }
 
-    const shouldRetry = (err: unknown) => (err as AxiosError)?.status === 429
+    const shouldRetry = (err: unknown) => (err as AxiosError)?.response?.status === 429
     const res = await retry(() => ai.createChatCompletion(request), shouldRetry, logger)
 
     logger.debug('Request result')

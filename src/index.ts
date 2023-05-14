@@ -7,6 +7,8 @@ import { AnalyzerOptions, createAnalyzeFiles } from './analyzeFiles'
 import fs from 'fs'
 import { Logger, LoggerOptions } from './util/logger'
 import { mkdirp } from 'mkdirp'
+import _ from 'lodash'
+import { DateTime } from 'luxon'
 
 type AppConfig = {
     inputDirectory: string
@@ -33,12 +35,23 @@ const run = async (appConfig: AppConfig) => {
 
     const analyzeFiles = createAnalyzeFiles(client, appConfig.analyzerOptions, logger)
 
-    for await (const r of analyzeFiles(appConfig.inputDirectory, filePaths)) {
-        const absoluteFilePath = path.join(appConfig.outputDirectory, r.filePath + '.result.txt')
-        const dir = path.dirname(absoluteFilePath)
+    for await (const { result, filePaths: resultFilePaths } of analyzeFiles(appConfig.inputDirectory, filePaths)) {
+        const dirs = resultFilePaths.map(filePath => path.dirname(filePath))
+        const shortestDir = _.sortBy(dirs, dir => dir.length)[0]
+        const timeStr = DateTime.now().toFormat('yyyyMMddHHmmss')
+        const absoluteFilePath = path.join(appConfig.outputDirectory, shortestDir, `result.${timeStr}.txt`)
+        const outContent = [
+            'Summary',
+            result.summary,
+            'Re-analyzed result',
+            result.improvedResult,
+            'Initial result',
+            result.initialResult
+        ].join('\n\n')
+
         if (!appConfig.analyzerOptions.dryRun) {
-            mkdirp.mkdirpSync(dir)
-            fs.writeFileSync(absoluteFilePath, r.result)
+            mkdirp.mkdirpSync(path.dirname(absoluteFilePath))
+            fs.writeFileSync(absoluteFilePath, outContent)
         }
     }
 }
@@ -53,6 +66,7 @@ run({
     analyzerOptions: {
         model: 'gpt-3.5-turbo',
         maxSourceTokensPerRequest: 2000,
+        maxResultTokens: 800,
         dryRun: false,
         systemPrompt: [
             'You are a senior fullstack developer.',
@@ -70,16 +84,21 @@ run({
             'If the code is good, just say LGTM. Don\'t elaborate.',
             'Always be concrete about your suggestions. Point to specific examples, and explain why they need improvement.',
             'You MUST NOT attempt to explain the code.',
-            'You MUST only review the code in file {filePath}.',
-            'The code that comes before the file {filePath} may ONLY be used for reference.',
+            'You MUST review all code files.',
+            'You MUST always indicate which code file or files you are reviewing.',
+            'The start of each code file is always indicated by a comment with its path, like this: // file = filepath.ts.'
         ].join('\n'),
-        enableSelfAnalysis: false,
+        enableSelfAnalysis: true,
         selfAnalysisPrompt: [
-            'Please re-analyze the code and code review, and give an improved answer if possible. Remember to only review the file {filePath}'
+            'Please re-analyze the code and code review, and give an improved answer where possible.'
+        ].join('\n'),
+        enableSummary: true,
+        summaryPrompt: [
+            'Please summarize all your findings so far into a short bullet point list. Max 10 items.'
         ].join('\n'),
         textProcessing: {
-            continuedContentPrefix: '// ...previous code snipped',
-            snippedContentPostfix: '// ...rest of code snipped',
+            prefix: '// ...previous code snipped',
+            postfix: '// ...rest of code snipped',
             filePathPrefixTemplate: '// file = {filePath}'
         }
     },
