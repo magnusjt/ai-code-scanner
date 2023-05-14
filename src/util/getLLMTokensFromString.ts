@@ -1,15 +1,8 @@
 export const getLLMTokensFromString = (str: string) => {
     const tokens: string[] = []
-    let nextToken = ''
-    for (const char of str.split('')) {
-        nextToken = nextToken.concat(char)
-        if (nextToken.length >= 4) { // Apparently a token is around 4 characters
-            tokens.push(nextToken)
-            nextToken = ''
-        }
-    }
-    if (nextToken.length > 0) {
-        tokens.push(nextToken)
+    const chars = str.split('')
+    for (let i = 0; i < chars.length; i += 4) {
+        tokens.push(chars.slice(i, i + 4).join('')) // Apparently a token is around 4 characters
     }
     return tokens
 }

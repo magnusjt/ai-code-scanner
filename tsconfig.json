@@ -4,6 +4,8 @@
     "module": "commonjs",
     "target": "ESNext",
     "moduleResolution": "node",
+    "strict": true,
+    "noImplicitAny": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "downlevelIteration": true,

@@ -12,7 +12,7 @@ const levelToNumber = {
 export class Logger {
     constructor(private options: LoggerOptions) {}
 
-    log = (level: LoggerOptions['level'], ...args: any[]) => {
+    log = (level: LoggerOptions['level'], ...args: unknown[]) => {
         const levelNumber = levelToNumber[level]
         const minimumLevel = levelToNumber[this.options.level]
         if (levelNumber < minimumLevel) {
@@ -21,8 +21,8 @@ export class Logger {
         console.log(...args)
     }
 
-    debug = (...args: any[]) => this.log('debug', ...args)
-    info = (...args: any[]) => this.log('info', ...args)
-    warn = (...args: any[]) => this.log('warn', ...args)
-    error = (...args: any[]) => this.log('error', ...args)
+    debug = (...args: unknown[]) => this.log('debug', ...args)
+    info = (...args: unknown[]) => this.log('info', ...args)
+    warn = (...args: unknown[]) => this.log('warn', ...args)
+    error = (...args: unknown[]) => this.log('error', ...args)
 }
