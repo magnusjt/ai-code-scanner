@@ -1,0 +1,9 @@
+{
+  "promptFilePath": "./prompts/codereview2_concrete.txt",
+  "apiEndpoint": {
+    "type": "openai"
+  },
+  "model": "gpt-3.5-turbo",
+  "include": ["\\.ts$", "\\.sh$", "\\.json$", "\\.yaml$"],
+  "exclude": ["node_modules", "\\.env", "dist$", "package-lock\\.json"]
+}

@@ -24,20 +24,14 @@ export const getFilesInDirDepthFirst = (baseDir: string, dir: string, options: F
 
     const filesInSubDirs = filesWithType
         .filter(f => f.type === 'dir')
+        .filter(f => !options.exclude.some(regex => regex.test(f.path)))
         .flatMap(f => getFilesInDirDepthFirst(baseDir, f.path, options))
 
     const topLevelFiles = filesWithType
         .filter(f => f.type === 'file')
         .flatMap(f => f.path)
-        .filter(path => {
-            if (!options.include.some(regex => regex.test(path))) {
-                return false
-            }
-            if (options.exclude.some(regex => regex.test(path))) {
-                return false
-            }
-            return true
-        })
+        .filter(filePath => options.include.some(regex => regex.test(filePath)))
+        .filter(filePath => !options.exclude.some(regex => regex.test(filePath)))
 
     return [...filesInSubDirs, ...topLevelFiles]
 }

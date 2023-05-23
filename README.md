@@ -5,63 +5,49 @@ It dumps one result per input file in an output folder.
 
 ## How to use
 
-- Tweak the parameters in index.ts to your liking.
-- Paste in your openai api key in .env-local (see .env-sample for examples)
-- Run `npm ci`
-- Run `npm start`
+- Set API_KEY as an environment variable OR copy .env-sample to .env-local and add your key there
+- Copy config.sample.json to config.json, and tweak the settings to your liking
+- Run ./bin/ai-code-scanner.js --input ./src --output ./.output --config ./config.json
 
-Example config:
+CLI Options
 
-````ts
-const config = {
-    inputDirectory: path.join(__dirname, '../'),
-    outputDirectory: path.join(__dirname, '../.output'),
-    fileScannerOptions: {
-        include:  [/\.ts$/],
-        exclude: [/node_modules/, /\.env/],
-    },
-    analyzerOptions: {
-        model: 'gpt-3.5-turbo',
-        maxSourceTokensPerRequest: 2000,
-        maxResultTokens: 800,
-        dryRun: false,
-        systemPrompt: [
-            'You are a senior fullstack developer.',
-            'You are an expert on the typescript programming language.',
-            'You care deeply about readable and maintainable code.',
-            'You pay close attention to technical details, and make sure the code is correct.',
-            'You pay extra close attention to function names, and that the function does what it says it does.',
-            'You know how to write secure software, and can spot security issues.',
-            'Your task is to review the code given to you.',
-            'You MUST look for bugs, security issues, readability, maintainability, performance, and other possible improvements.',
-            'You should verify that the code is up to date with modern standards.',
-            'You MUST think through the code step by step before committing to your final answer.',
-            'You MUST give your final answer as bullet point lists.',
-            'There should be a separate list for each category of review.',
-            'If the code is good, just say LGTM. Don\'t elaborate.',
-            'Always be concrete about your suggestions. Point to specific examples, and explain why they need improvement.',
-            'You MUST NOT attempt to explain the code.',
-            'You MUST review all code files.',
-            'You MUST always indicate which code file or files you are reviewing.',
-            'The start of each code file is always indicated by a comment with its path, like this: // file = filepath.ts.'
-        ].join('\n'),
-        enableSelfAnalysis: true,
-        selfAnalysisPrompt: [
-            'Please re-analyze the code and code review, and give an improved answer where possible.'
-        ].join('\n'),
-        enableSummary: true,
-        summaryPrompt: [
-            'Please summarize all your findings so far into a short bullet point list. Max 10 items.'
-        ].join('\n'),
-        textProcessing: {
-            prefix: '// ...previous code snipped',
-            postfix: '// ...rest of code snipped',
-            filePathPrefixTemplate: '// file = {filePath}'
-        }
-    },
-    loggerOptions: {
-        level: 'debug'
+````
+ai-code-scanner 1.0.0
+> Scans and reviews code in given directories
+
+OPTIONS:
+  --config <str> - Path to json config file [optional]
+  --input <str>  - Path to input directory [optional]
+  --output <str> - Path to output directory [optional]
+  --prompt <str> - Path to file containing the prompt [optional]
+  --model <str>  - OpenAI model name, one of gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301 [optional]
+
+FLAGS:
+  --enable-self-analysis - Enable self analysis prompt
+  --enable-summary       - Enable summary prompt
+  --verbose              - Verbose logging
+  --dry-run              - Run without calling api's
+  --help, -h             - show help
+  --version, -v          - print the version
+````
+
+Config options:
+
+````
+{
+    apiEndpoint: {
+        type: 'azure'
+        deploymentId: string
+        host: string // E.g. https://<your-host>.openai.azure.com
+    } | {
+        type: 'openai'
     }
+    include: string[] // Regexes of filepaths to include
+    exclude: string[] // Regexes of filepaths/dirs to exclude
+    inputPath?: string // Path to input dir. Can be overridden by cli args
+    outputPath?: string // Path to output dir. Can be overridden by cli args
+    promptFilePath?: string // Path to file containing the main system prompt. See ./prompts for inspiration. Can be overridden by cli args
+    model?: string // one of gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301. Can be overridden by cli args. Defaults to gpt-3.5-turbo
 }
 ````
 

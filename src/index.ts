@@ -1,108 +1,126 @@
+#!/usr/bin/env node
+
 import dotenv from 'dotenv'
 import path from 'path'
 dotenv.config({ path: path.join(__dirname, '../.env-local') })
-import { Configuration, OpenAIApi } from 'openai'
-import { FileScannerOptions, getFilesInDirDepthFirst } from './util/getFilesInDirDepthFirst'
-import { AnalyzerOptions, createAnalyzeFiles } from './analyzeFiles'
 import fs from 'fs'
-import { Logger, LoggerOptions } from './util/logger'
-import { mkdirp } from 'mkdirp'
-import _ from 'lodash'
-import { DateTime } from 'luxon'
+import { run } from './run'
+import * as cmd from 'cmd-ts'
+import { AnalyzerOptions } from './analyzeFiles'
 
-type AppConfig = {
-    inputDirectory: string
-    outputDirectory: string
-    fileScannerOptions: FileScannerOptions
-    loggerOptions: LoggerOptions
-    analyzerOptions: AnalyzerOptions
+type Config = {
+    apiEndpoint: {
+        type: 'azure'
+        deploymentId: string
+        host: string
+    } | {
+        type: 'openai'
+    }
+    include: string[]
+    exclude: string[]
+
+    inputPath?: string
+    outputPath?: string
+    promptFilePath?: string
+    model?: string
 }
 
-const run = async (appConfig: AppConfig) => {
-    const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) {
-        throw new Error('OPENAI_API_KEY must be set')
+const parseConfig = (config: any): Config => {
+    if (!config.apiEndpoint) throw new Error('apiEndpoint must be set')
+    if (!Array.isArray(config.include)) throw new Error('include must be an array')
+    if (!Array.isArray(config.exclude)) throw new Error('exclude must be an array')
+    if (!['azure', 'openai'].includes(config.apiEndpoint.type)) throw new Error('apiEndpoint.type must be set to "azure" or "openai"')
+    if (config.apiEndpoint.type === 'azure') {
+        if (!config.apiEndpoint.deploymentId) throw new Error('apiEndpoint.deploymentId must be set')
+        if (!config.apiEndpoint.host) throw new Error('apiEndpoint.host must be set')
     }
+    return config
+}
 
-    const config = new Configuration({ apiKey })
-    const client = new OpenAIApi(config)
-    const logger = new Logger(appConfig.loggerOptions)
-
-    const filePaths = getFilesInDirDepthFirst(appConfig.inputDirectory, './', appConfig.fileScannerOptions)
-
-    logger.info('Analyzing files')
-    logger.info(JSON.stringify(filePaths, null, 2))
-
-    const analyzeFiles = createAnalyzeFiles(client, appConfig.analyzerOptions, logger)
-
-    for await (const { result, filePaths: resultFilePaths } of analyzeFiles(appConfig.inputDirectory, filePaths)) {
-        const dirs = resultFilePaths.map(filePath => path.dirname(filePath))
-        const shortestDir = _.sortBy(dirs, dir => dir.length)[0]
-        const timeStr = DateTime.now().toFormat('yyyyMMddHHmmss')
-        const absoluteFilePath = path.join(appConfig.outputDirectory, shortestDir, `result.${timeStr}.txt`)
-        const outContent = [
-            'Summary',
-            result.summary,
-            'Re-analyzed result',
-            result.improvedResult,
-            'Initial result',
-            result.initialResult
-        ].join('\n\n')
-
-        if (!appConfig.analyzerOptions.dryRun) {
-            mkdirp.mkdirpSync(path.dirname(absoluteFilePath))
-            fs.writeFileSync(absoluteFilePath, outContent)
-        }
+const readJsonFile = (filePath: string) => {
+    const content = fs.readFileSync(filePath, 'utf-8')
+    try {
+        return JSON.parse(content)
+    } catch (err: any) {
+        throw new Error('Invalid json in ' + filePath)
     }
 }
 
-run({
-    inputDirectory: path.join(__dirname, '../'),
-    outputDirectory: path.join(__dirname, '../.output'),
-    fileScannerOptions: {
-        include:  [/\.ts$/],
-        exclude: [/node_modules/, /\.env/],
+const app = cmd.command({
+    name: 'ai-code-scanner',
+    version: '1.0.0',
+    description: 'Scans and reviews code in given directories',
+    args: {
+        configPath: cmd.option({ type: cmd.string, long: 'config', defaultValue: () => 'config.json', description: 'Path to json config file' }),
+        inputPath: cmd.option({ type: cmd.optional(cmd.string), long: 'input', description: 'Path to input directory' }),
+        outputPath: cmd.option({ type: cmd.optional(cmd.string), long: 'output', description: 'Path to output directory' }),
+        promptFilePath: cmd.option({ type: cmd.optional(cmd.string), long: 'prompt', description: 'Path to file containing the prompt' }),
+        model: cmd.option({ type: cmd.optional(cmd.string), long: 'model', description: 'OpenAI model name, one of gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301' }),
+        enableSelfAnalysis: cmd.flag({ long: 'enable-self-analysis', description: 'Enable self analysis prompt' }),
+        enableSummary: cmd.flag({ long: 'enable-summary', description: 'Enable summary prompt' }),
+        verbose: cmd.flag({ long: 'verbose', description: 'Verbose logging' }),
+        dryRun: cmd.flag({ long: 'dry-run', description: 'Run without calling api\'s' }),
     },
-    analyzerOptions: {
-        model: 'gpt-3.5-turbo',
-        maxSourceTokensPerRequest: 2000,
-        maxResultTokens: 800,
-        dryRun: false,
-        systemPrompt: [
-            'You are a senior fullstack developer.',
-            'You are an expert on the typescript programming language.',
-            'You care deeply about readable and maintainable code.',
-            'You pay close attention to technical details, and make sure the code is correct.',
-            'You pay extra close attention to function names, and that the function does what it says it does.',
-            'You know how to write secure software, and can spot security issues.',
-            'Your task is to review the code given to you.',
-            'You MUST look for bugs, security issues, readability, maintainability, performance, and other possible improvements.',
-            'You should verify that the code is up to date with modern standards.',
-            'You MUST think through the code step by step before committing to your final answer.',
-            'You MUST give your final answer as bullet point lists.',
-            'There should be a separate list for each category of review.',
-            'If the code is good, just say LGTM. Don\'t elaborate.',
-            'Always be concrete about your suggestions. Point to specific examples, and explain why they need improvement.',
-            'You MUST NOT attempt to explain the code.',
-            'You MUST review all code files.',
-            'You MUST always indicate which code file or files you are reviewing.',
-            'The start of each code file is always indicated by a comment with its path, like this: // file = filepath.ts.'
-        ].join('\n'),
-        enableSelfAnalysis: true,
-        selfAnalysisPrompt: [
-            'Please re-analyze the code and code review, and give an improved answer where possible.'
-        ].join('\n'),
-        enableSummary: true,
-        summaryPrompt: [
-            'Please summarize all your findings so far into a short bullet point list. Max 10 items.'
-        ].join('\n'),
-        textProcessing: {
-            prefix: '// ...previous code snipped',
-            postfix: '// ...rest of code snipped',
-            filePathPrefixTemplate: '// file = {filePath}'
+    handler: async (opts) => {
+        const config = parseConfig(readJsonFile(opts.configPath))
+        const inputPath = opts.inputPath ?? config.inputPath
+        if (!inputPath) {
+            throw new Error('Input path must be set either via config or via command line')
         }
+        const outputPath = opts.outputPath ?? config.outputPath ?? '.output'
+        const promptFilePath = opts.promptFilePath ?? config.promptFilePath ?? path.join(__dirname, '../prompts/codereview2_concrete.txt')
+        const prompt = fs.readFileSync(promptFilePath, 'utf-8')
+        const model = opts.model ?? config.model ?? 'gpt-3.5-turbo'
+        const verbose = opts.verbose
+
+        const apiKey = process.env.API_KEY
+        if (!apiKey) throw new Error('API_KEY must be set')
+
+        await run({
+            inputDirectory: inputPath,
+            outputDirectory: outputPath,
+            fileScannerOptions: {
+                include: config.include.map(x => new RegExp(x)),
+                exclude: config.exclude.map(x => new RegExp(x)),
+            },
+            apiEndpoint: config.apiEndpoint.type === 'openai'
+                ? {
+                    ...config.apiEndpoint,
+                    type: 'openai',
+                    apiKey: apiKey
+                }
+                : {
+                    ...config.apiEndpoint,
+                    type: 'azure',
+                    apiKey: apiKey
+                },
+            analyzerOptions: {
+                model: model as AnalyzerOptions['model'],
+                maxSourceTokensPerRequest: 2000,
+                maxResultTokens: 800,
+                dryRun: opts.dryRun,
+                systemPrompt: prompt,
+                enableSelfAnalysis: opts.enableSelfAnalysis,
+                selfAnalysisPrompt: [
+                    'Can you try to improve upon your answer?'
+                ].join('\n'),
+                enableSummary: opts.enableSummary,
+                summaryPrompt: [
+                    'Please summarize all your findings so far into a short bullet point list. Max 10 items.'
+                ].join('\n'),
+                textProcessing: {
+                    prefix: '// ...previous lines snipped',
+                    postfix: '// ...rest of lines snipped',
+                    filePathPrefixTemplate: '// file = {filePath}'
+                }
+            },
+            loggerOptions: {
+                level: verbose ? 'debug' : 'info'
+            }
+        })
     },
-    loggerOptions: {
-        level: 'debug'
-    }
 })
+
+cmd.run(app, process.argv.slice(2))
+    .catch(err => console.error(err))
+

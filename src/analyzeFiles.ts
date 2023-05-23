@@ -8,6 +8,7 @@ import { AxiosError } from 'axios'
 import { retry } from './util/retry'
 import { getLLMTokensFromString } from './util/getLLMTokensFromString'
 import { interpolateTemplate } from './util/interpolateTemplate'
+import { chunkAsyncIterator } from './util/chunkAsyncIterator'
 
 export type AnalyzerOptions = {
     model: 'gpt-4' | 'gpt-4-0314' | 'gpt-4-32k' | 'gpt-4-32k-0314' | 'gpt-3.5-turbo' | 'gpt-3.5-turbo-0301'
@@ -69,7 +70,7 @@ type SlicePart = {
     filePath: string
     content: string
 }
-type Result = {
+export type Result = {
     initialResult: string
     improvedResult: string
     summary: string
@@ -84,10 +85,14 @@ export const createAnalyzeFiles = (
     baseDirectory: string,
     filePaths: string[]
 ): AsyncGenerator<{ result: Result, filePaths: string[] }, void, void> {
-    for await (const slice of getContentSlices(logger, options, baseDirectory, filePaths)) {
-        const result = await analyzeSlice(ai, options, logger, slice)
-
-        yield { result, filePaths: slice.map(part => part.filePath) }
+    for await (const slices of chunkAsyncIterator(getContentSlices(logger, options, baseDirectory, filePaths), 4)) {
+        const results = await Promise.all(slices.map(async slice => {
+            const result = await analyzeSlice(ai, options, logger, slice)
+            return { result, filePaths: slice.map(part => part.filePath) }
+        }))
+        for (const result of results) {
+            yield result
+        }
     }
 }
 
@@ -214,7 +219,7 @@ const sendAiRequest = async (
     const request: CreateChatCompletionRequest = {
         model: options.model,
         messages,
-        max_tokens: options.maxResultTokens
+        max_tokens: options.maxResultTokens,
     }
 
     logger.debug('Sending request')
