@@ -32,7 +32,7 @@ const createOpenAIClient = (appConfig: AppConfig) => {
 
     if (appConfig.apiEndpoint.type === 'azure') {
         axiosInstance.interceptors.request.use(request => {
-            request.url += `?api-version='2023-03-15-preview'`
+            request.url += `?api-version=2023-03-15-preview`
             request.headers.set('api-key', appConfig.apiEndpoint.apiKey)
             return request
         })

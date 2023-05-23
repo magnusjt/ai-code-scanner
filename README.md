@@ -17,10 +17,10 @@ ai-code-scanner 1.0.0
 
 OPTIONS:
   --config <str> - Path to json config file [optional]
-  --input <str>  - Path to input directory [optional]
-  --output <str> - Path to output directory [optional]
-  --prompt <str> - Path to file containing the prompt [optional]
-  --model <str>  - OpenAI model name, one of gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301 [optional]
+  --input <str>  - Path to input directory. Required
+  --output <str> - Path to output directory. Default: .output [optional]
+  --prompt <str> - Path to file containing the prompt. Default: ./prompts/codereview2_concrete.txt [optional]
+  --model <str>  - OpenAI model name, one of gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301. Default: gpt-3.5-turbo [optional]
 
 FLAGS:
   --enable-self-analysis - Enable self analysis prompt
@@ -29,6 +29,7 @@ FLAGS:
   --dry-run              - Run without calling api's
   --help, -h             - show help
   --version, -v          - print the version
+
 ````
 
 Config options:
@@ -40,14 +41,10 @@ Config options:
         deploymentId: string
         host: string // E.g. https://<your-host>.openai.azure.com
     } | {
-        type: 'openai'
+        type: 'openai' // This is the default
     }
-    include: string[] // Regexes of filepaths to include
-    exclude: string[] // Regexes of filepaths/dirs to exclude
-    inputPath?: string // Path to input dir. Can be overridden by cli args
-    outputPath?: string // Path to output dir. Can be overridden by cli args
-    promptFilePath?: string // Path to file containing the main system prompt. See ./prompts for inspiration. Can be overridden by cli args
-    model?: string // one of gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301. Can be overridden by cli args. Defaults to gpt-3.5-turbo
+    include: string[] // Regexes of filepaths to include. Default: ['\\.ts$']
+    exclude: string[] // Regexes of filepaths/dirs to exclude. Default: ['node_modules']
 }
 ````
 

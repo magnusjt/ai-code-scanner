@@ -18,15 +18,21 @@ type Config = {
     }
     include: string[]
     exclude: string[]
-
-    inputPath?: string
-    outputPath?: string
-    promptFilePath?: string
-    model?: string
 }
 
 const parseConfig = (config: any): Config => {
-    if (!config.apiEndpoint) throw new Error('apiEndpoint must be set')
+    if (!config.apiEndpoint) {
+        config.apiEndpoint = {
+            type: 'openai',
+        }
+    }
+    if (!config.include) {
+        config.include = ['\\.ts$']
+    }
+    if (!config.exclude) {
+        config.exclude = ['node_modules']
+    }
+
     if (!Array.isArray(config.include)) throw new Error('include must be an array')
     if (!Array.isArray(config.exclude)) throw new Error('exclude must be an array')
     if (!['azure', 'openai'].includes(config.apiEndpoint.type)) throw new Error('apiEndpoint.type must be set to "azure" or "openai"')
@@ -52,10 +58,10 @@ const app = cmd.command({
     description: 'Scans and reviews code in given directories',
     args: {
         configPath: cmd.option({ type: cmd.string, long: 'config', defaultValue: () => 'config.json', description: 'Path to json config file' }),
-        inputPath: cmd.option({ type: cmd.optional(cmd.string), long: 'input', description: 'Path to input directory' }),
-        outputPath: cmd.option({ type: cmd.optional(cmd.string), long: 'output', description: 'Path to output directory' }),
-        promptFilePath: cmd.option({ type: cmd.optional(cmd.string), long: 'prompt', description: 'Path to file containing the prompt' }),
-        model: cmd.option({ type: cmd.optional(cmd.string), long: 'model', description: 'OpenAI model name, one of gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301' }),
+        inputPath: cmd.option({ type: cmd.string, long: 'input', description: 'Path to input directory. Required' }),
+        outputPath: cmd.option({ type: cmd.optional(cmd.string), long: 'output', description: 'Path to output directory. Default: .output' }),
+        promptFilePath: cmd.option({ type: cmd.optional(cmd.string), long: 'prompt', description: 'Path to file containing the prompt. Default: ./prompts/codereview2_concrete.txt' }),
+        model: cmd.option({ type: cmd.optional(cmd.string), long: 'model', description: 'OpenAI model name, one of gpt-4, gpt-4-0314, gpt-4-32k, gpt-4-32k-0314, gpt-3.5-turbo, gpt-3.5-turbo-0301. Default: gpt-3.5-turbo' }),
         enableSelfAnalysis: cmd.flag({ long: 'enable-self-analysis', description: 'Enable self analysis prompt' }),
         enableSummary: cmd.flag({ long: 'enable-summary', description: 'Enable summary prompt' }),
         verbose: cmd.flag({ long: 'verbose', description: 'Verbose logging' }),
@@ -63,14 +69,14 @@ const app = cmd.command({
     },
     handler: async (opts) => {
         const config = parseConfig(readJsonFile(opts.configPath))
-        const inputPath = opts.inputPath ?? config.inputPath
+        const inputPath = opts.inputPath
         if (!inputPath) {
             throw new Error('Input path must be set either via config or via command line')
         }
-        const outputPath = opts.outputPath ?? config.outputPath ?? '.output'
-        const promptFilePath = opts.promptFilePath ?? config.promptFilePath ?? path.join(__dirname, '../prompts/codereview2_concrete.txt')
+        const outputPath = opts.outputPath ?? '.output'
+        const promptFilePath = opts.promptFilePath ?? path.join(__dirname, '../prompts/codereview2_concrete.txt')
         const prompt = fs.readFileSync(promptFilePath, 'utf-8')
-        const model = opts.model ?? config.model ?? 'gpt-3.5-turbo'
+        const model = opts.model ?? 'gpt-3.5-turbo'
         const verbose = opts.verbose
 
         const apiKey = process.env.API_KEY
